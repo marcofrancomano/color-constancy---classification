@@ -23,8 +23,9 @@ def accuracy(out, labels):
 
 num_ftrs = model.fc.in_features
 model.fc = torch.nn.Linear(num_ftrs, 1)
-t=torch.ones([1, 2], dtype=torch.float64)
+t=torch.ones([1], dtype=torch.float64)
 t[0]=0.4853
+t= t.to('cuda')
 unb_criterion = torch.nn.BCEWithLogitsLoss(weight =t)
 criterion = torch.nn.BCEWithLogitsLoss()
 optimizer = optim.SGD(model.parameters(), lr=0.0001, momentum=0.9)
@@ -103,8 +104,10 @@ class MyDataset(Dataset):
           image = self.transform(image=image, cropping_bbox=[x_min, y_min, x_max, y_max])["image"]
 
         else:
-          image = torch.as_tensor(image['image'])  # convert to tensor
+        #image = torch.as_tensor(image['image'])  # convert to tensor
+          image = torch.as_tensor(image)
           image = image.permute((2, 0, 1))  # permute the image from HWC to CHW format
+        image=transforms.Resize((512,512))(image)
         # print(image.dtype)
         # print(image.shape)
         label=np.float32(self.brix.iloc[idx,4])
@@ -115,47 +118,33 @@ class MyDataset(Dataset):
 
 #brix_dataset = MyDataset(csv_file=open('/content/drive/MyDrive/datasets/brix_labels.csv', 'r'),
                                      #root_dir='drive/MyDrive/datasets',transform=None,train=True)
-train_dataset = MyDataset(csv_file=open('/content/drive/MyDrive/canopies-utilities/brix_labels.csv', 'r'),
+train_dataset = MyDataset(csv_file=open('/content/drive/MyDrive/datasets/brix_labels.csv', 'r'),
                                      root_dir='drive/MyDrive/datasets',transform=preprocess_train,train=True)
-val_dataset = MyDataset(csv_file=open('/content/drive/MyDrive/canopies-utilities/brix_labels.csv', 'r'),
+val_dataset = MyDataset(csv_file=open('/content/drive/MyDrive/datasets/brix_labels.csv', 'r'),
                                      root_dir='drive/MyDrive/datasets',transform=preprocess_val,train=False)
                            
-#sample = brix_dataset[2]
-#input_image=sample['image']
-#print(sample['label'])
-#input_tensor=input_image
-#input_batch = input_tensor.unsqueeze(0)  # create a mini-batch as expected by the model
+sample = train_dataset[2]
+input_image=sample['image']
+print(sample['label'])
+input_tensor=input_image
+input_batch = input_tensor.unsqueeze(0)  # create a mini-batch as expected by the model
 
-#if torch.cuda.is_available():
-    #input_batch = input_batch.to('cuda')
-    #model.to('cuda')
+if torch.cuda.is_available():
+    input_batch = input_batch.to('cuda')
+    model.to('cuda')
 
-#with torch.no_grad():
-    #output = model(input_batch)
-    #print(output)
-    #print(input_batch.shape)
-#probabilities = torch.sigmoid(output[0])
-# print(input_batch)
-#print("Prob:", probabilities)
+with torch.no_grad():
+    output = model(input_batch)
+    print(output)
+    print(input_batch.shape)
+probabilities = torch.sigmoid(output[0])
+print(input_batch)
+print("Prob:", probabilities)
 
 from torch.utils.data import DataLoader
 from sklearn.utils import resample
 
 #training_data,test_data=torch.utils.data.random_split(brix_dataset,[120,30])
-#j=0
-#for i in range(len(training_data)):
-  #print(training_data[i]['image'])
- # j+=1
-
-#print("number of samples for train:",j)
-#j=0
-#for i in range(len(test_data)):
-  #print(training_data[i]['image'])
-  #j+=1
-#print("number of samples for test:",j)
-
-#training_data=brix_dataset
-#test_data=brix_dataset
 #train_dataloader = DataLoader(training_data, batch_size=6, shuffle=True)
 #test_dataloader = DataLoader(test_data, batch_size=6, shuffle=True)
 
@@ -165,7 +154,7 @@ val_dataloader = DataLoader(val_dataset, batch_size=1)
 
 import sklearn.metrics
 
-def evaluate(model,dataloader,criterion):
+def evaluate(model,dataloader,criterion,device):
   model.eval()
   with torch.no_grad():
     val_loss=0.0
@@ -175,23 +164,23 @@ def evaluate(model,dataloader,criterion):
     for data in dataloader:
       data_= data['image']
       target_=data['label']
-      target_=torch.tensor(target_).unsqueeze(0)
+      #target_=torch.tensor(target_).unsqueeze(0)
       if torch.cuda.is_available():
-        data_, target_ = data_.to('cuda'), target_.to('cuda')
-      with torch.autocast():
-        outputs=model(data_)
-        outputs=outputs.reshape(data_.size[0])
-        pred=1 if torch.sigmoid(outputs).iter()>0.5 else 0
-        preds_all.append(pred)
-        labels_all.append(int(target_.item()))
-        loss=criterion(outputs,target_)
-      val_loss+=(loss.iter()-val_loss/(i+1)) #calcolo la media volta per volta
+        data_, target_ = data_.to(device), target_.to(device)
+    
+      outputs=model(data_)
+      outputs=outputs.reshape(data_.size(0))
+      pred=1 if torch.sigmoid(outputs).item()>0.5 else 0
+      preds_all.append(pred)
+      labels_all.append(int(target_.item()))
+      loss=criterion(outputs,target_)
+      val_loss+=(loss.item()-val_loss/(i+1)) #calcolo la media volta per volta
       i+=1
     f1_score=sklearn.metrics.f1_score(labels_all,preds_all)
     print(f'Validation loss: {val_loss:.4f}')
     print(f'F1 score: {f1_score:.4f}')
-    print(f'Predictions: {preds_all}')
-    print(f'Labels: {labels_all}')
+    #print(f'Predictions: {preds_all}')
+    #print(f'Labels: {labels_all}')
   model.train()
   return val_loss
 
@@ -200,8 +189,9 @@ valid_loss_min = np.Inf
 val_loss = []
 val_acc = []
 train_loss = 0
-train_acc = []
 dataset_size=len(train_dataset)
+preds_all=[]
+labels_all=[]
 
 model.train()
 
@@ -214,33 +204,42 @@ for epoch in range(1, n_epochs+1):
   for data in train_dataloader:
     data_= data['image']
     target_=data['label']
- 
-    target_=torch.tensor(target_).unsqueeze(0)
+    #data_ = data_.unsqueeze(0) 
+    #target_=torch.tensor(target_).unsqueeze(0)
     if torch.cuda.is_available():
       data_, target_ = data_.to('cuda'), target_.to('cuda')
     optimizer.zero_grad()
-    #data_ = data_.unsqueeze(0) 
-    target_=target_.reshape([6,1])
+    
+    target_=target_.reshape([6])
     #print(data_.shape)     
     outputs = model(data_)
     #print(outputs,target_)
+    outputs=outputs.reshape(data_.size(0))
+    #pred=1 if torch.sigmoid(outputs).item() >0.5 else 0
+    #preds_all.append(pred)
+    #labels_all.append(int(target_.item()))
     loss = unb_criterion(outputs, target_)
     loss.backward()
     optimizer.step()
     train_loss += loss.item()
   print(f'\ntrain-loss: {train_loss/dataset_size:.4f}')
+  #f1_score=sklearn.metrics.f1_score(labels_all,preds_all)
+  #print(f'F1 score: {f1_score:.4f}')
   train_loss = 0
   # Evaluate model after each epoch
-  evaluate(model,val_dataloader,criterion)
+  evaluate(model,val_dataloader,criterion,'cuda')
 
 correct = 0
 total = 0
 # since we're not training, we don't need to calculate the gradients for our outputs
+model.eval()
 with torch.no_grad():
     for data in val_dataloader:
         images= data['image']
         labels=data['label']
         images, labels = images.cuda(), labels.cuda()
+        #images, labels = images.to('cuda'), labels.to('cuda')
+        
         # calculate outputs by running images through the network
         outputs = model(images)
         probabilities = torch.sigmoid(outputs)
