@@ -8,18 +8,27 @@ Original file is located at
 """
 
 import torch
-model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
+model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet34', pretrained=True)
 model.eval()
 
 from google.colab import drive
 drive.mount('/content/drive')
 
+# Commented out IPython magic to ensure Python compatibility.
+# %load_ext tensorboard
+import tensorflow as tf
+import datetime
+
+# Clear any logs from previous runs
+!rm -rf ./logs/
+
+current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+train_log_dir = 'logs/gradient_tape/' + current_time + '/train'
+test_log_dir = 'logs/gradient_tape/' + current_time + '/test'
+train_summary_writer = tf.summary.create_file_writer(train_log_dir)
+test_summary_writer = tf.summary.create_file_writer(test_log_dir)
+
 import torch.optim as optim
-
-def accuracy(out, labels):
-  _,pred = torch.max(out, dim=1)
-  return torch.sum(pred==labels).item()
-
 
 num_ftrs = model.fc.in_features
 model.fc = torch.nn.Linear(num_ftrs, 1)
@@ -28,7 +37,7 @@ t[0]=0.4853
 t= t.to('cuda')
 unb_criterion = torch.nn.BCEWithLogitsLoss(weight =t)
 criterion = torch.nn.BCEWithLogitsLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.0001, momentum=0.9)
+optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
 from torchvision.transforms.transforms import Normalize
 import numpy as np
@@ -160,7 +169,6 @@ def evaluate(model,dataloader,criterion,device):
     val_loss=0.0
     preds_all=[]
     labels_all=[]
-    i=0
     for data in dataloader:
       data_= data['image']
       target_=data['label']
@@ -174,20 +182,21 @@ def evaluate(model,dataloader,criterion,device):
       preds_all.append(pred)
       labels_all.append(int(target_.item()))
       loss=criterion(outputs,target_)
-      val_loss+=(loss.item()-val_loss/(i+1)) #calcolo la media volta per volta
-      i+=1
+      val_loss+=loss.item()
+ 
     f1_score=sklearn.metrics.f1_score(labels_all,preds_all)
-    print(f'Validation loss: {val_loss:.4f}')
+    print(f'Validation loss: {val_loss/len(val_dataset):.4f}')
     print(f'F1 score: {f1_score:.4f}')
     #print(f'Predictions: {preds_all}')
     #print(f'Labels: {labels_all}')
+    with test_summary_writer.as_default():
+      tf.summary.scalar('loss', val_loss/len(val_dataset), step=epoch)
+      tf.summary.scalar('f1_score', f1_score, step=epoch)
   model.train()
   return val_loss
 
-n_epochs = 20
-valid_loss_min = np.Inf
-val_loss = []
-val_acc = []
+n_epochs = 15
+
 train_loss = 0
 dataset_size=len(train_dataset)
 preds_all=[]
@@ -213,21 +222,37 @@ for epoch in range(1, n_epochs+1):
     target_=target_.reshape([6])
     #print(data_.shape)     
     outputs = model(data_)
-    #print(outputs,target_)
     outputs=outputs.reshape(data_.size(0))
-    #pred=1 if torch.sigmoid(outputs).item() >0.5 else 0
-    #preds_all.append(pred)
-    #labels_all.append(int(target_.item()))
+    probabilities=torch.sigmoid(outputs)
+    pred=torch.zeros([outputs.shape[0]])
+    #pred=pred.cuda()
+    for i in range(probabilities.shape[0]):
+      if probabilities[i]>0.5:
+        pred[i]=1
+
+    preds_all.extend(pred)
+    labels_all.extend(target_.cpu())
+    
     loss = unb_criterion(outputs, target_)
     loss.backward()
     optimizer.step()
     train_loss += loss.item()
+
   print(f'\ntrain-loss: {train_loss/dataset_size:.4f}')
-  #f1_score=sklearn.metrics.f1_score(labels_all,preds_all)
-  #print(f'F1 score: {f1_score:.4f}')
+  f1_score=sklearn.metrics.f1_score(labels_all,preds_all)
+  print(f'F1 score: {f1_score:.4f}')
+
+  with train_summary_writer.as_default():
+    tf.summary.scalar('loss', train_loss/dataset_size, step=epoch)
+    tf.summary.scalar('f1_score', f1_score, step=epoch)
   train_loss = 0
   # Evaluate model after each epoch
   evaluate(model,val_dataloader,criterion,'cuda')
+
+# Commented out IPython magic to ensure Python compatibility.
+#plot results
+!kill 1081
+# %tensorboard --logdir logs/gradient_tape
 
 correct = 0
 total = 0
@@ -238,14 +263,11 @@ with torch.no_grad():
         images= data['image']
         labels=data['label']
         images, labels = images.cuda(), labels.cuda()
-        #images, labels = images.to('cuda'), labels.to('cuda')
+        
         
         # calculate outputs by running images through the network
         outputs = model(images)
         probabilities = torch.sigmoid(outputs)
-        #print(outputs.shape,probabilities.shape,labels.shape)
-        # the class with the highest energy is what we choose as prediction
-        #_, predicted = torch.max(outputs.data, 1)
         pred=torch.zeros([probabilities.shape[0]])
         print(probabilities)
         pred=pred.cuda()
@@ -253,9 +275,7 @@ with torch.no_grad():
           if(probabilities[i]>0.5):
             pred[i]=1
 
-        #print(probabilities,labels)
-        #print(labels.size(0)))
-        #print(pred)
+       
         total += labels.size(0)
         correct += (pred == labels).sum().item()
         print(correct)
