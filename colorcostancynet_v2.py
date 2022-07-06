@@ -8,7 +8,7 @@ Original file is located at
 """
 
 import torch
-model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet34', pretrained=True)
+model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
 model.eval()
 
 from google.colab import drive
@@ -32,12 +32,9 @@ import torch.optim as optim
 
 num_ftrs = model.fc.in_features
 model.fc = torch.nn.Linear(num_ftrs, 1)
-t=torch.ones([1], dtype=torch.float64)
-t[0]=0.4853
-t= t.to('cuda')
-unb_criterion = torch.nn.BCEWithLogitsLoss(weight =t)
+unb_criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(0.346))
 criterion = torch.nn.BCEWithLogitsLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9,weight_decay=0.5)
 
 from torchvision.transforms.transforms import Normalize
 import numpy as np
@@ -57,7 +54,7 @@ from albumentations.pytorch.transforms import ToTensorV2
 preprocess_train = A.Compose([
     A.Normalize(max_pixel_value=1.0),
     A.RandomCropNearBBox(0.15),
-    A.HorizontalFlip(),
+    A.HorizontalFlip(p=0.5),
     ToTensorV2(),
 
 
@@ -100,7 +97,7 @@ class MyDataset(Dataset):
         image = image / (2**16-1)  # normalize between 0 and 1
 
         # Cropping box
-        box_path = os.path.join('/content/drive/MyDrive/canopies-utilities', 'bboxes', f'{l[0]}.txt')
+        box_path = os.path.join('/content/drive/MyDrive/datasets', 'bboxes', f'{l[0]}.txt')
         bbox = np.loadtxt(box_path, delimiter=" ", dtype=np.float32)
         bbox = bbox[1:]
         # Convert to pascal format xmin ymin xmax ymax
@@ -127,10 +124,10 @@ class MyDataset(Dataset):
 
 #brix_dataset = MyDataset(csv_file=open('/content/drive/MyDrive/datasets/brix_labels.csv', 'r'),
                                      #root_dir='drive/MyDrive/datasets',transform=None,train=True)
-train_dataset = MyDataset(csv_file=open('/content/drive/MyDrive/datasets/brix_labels.csv', 'r'),
-                                     root_dir='drive/MyDrive/datasets',transform=preprocess_train,train=True)
-val_dataset = MyDataset(csv_file=open('/content/drive/MyDrive/datasets/brix_labels.csv', 'r'),
-                                     root_dir='drive/MyDrive/datasets',transform=preprocess_val,train=False)
+train_dataset = MyDataset(csv_file=open('/content/drive/MyDrive/canopies-utilities/brix_labels.csv', 'r'),
+                                     root_dir='drive/MyDrive/canopies-utilities',transform=preprocess_train,train=True)
+val_dataset = MyDataset(csv_file=open('/content/drive/MyDrive/canopies-utilities/brix_labels.csv', 'r'),
+                                     root_dir='drive/MyDrive/canopies-utilities',transform=preprocess_val,train=False)
                            
 sample = train_dataset[2]
 input_image=sample['image']
@@ -158,7 +155,7 @@ from sklearn.utils import resample
 #test_dataloader = DataLoader(test_data, batch_size=6, shuffle=True)
 
 
-train_dataloader = DataLoader(train_dataset, batch_size=6, shuffle=True)
+train_dataloader = DataLoader(train_dataset, batch_size=4, shuffle=True)
 val_dataloader = DataLoader(val_dataset, batch_size=1)
 
 import sklearn.metrics
@@ -195,13 +192,13 @@ def evaluate(model,dataloader,criterion,device):
   model.train()
   return val_loss
 
-n_epochs = 15
+n_epochs = 30
 
 train_loss = 0
 dataset_size=len(train_dataset)
 preds_all=[]
 labels_all=[]
-
+print(dataset_size)
 model.train()
 
 for epoch in range(1, n_epochs+1):
@@ -219,7 +216,7 @@ for epoch in range(1, n_epochs+1):
       data_, target_ = data_.to('cuda'), target_.to('cuda')
     optimizer.zero_grad()
     
-    target_=target_.reshape([6])
+    target_=target_.reshape([4])
     #print(data_.shape)     
     outputs = model(data_)
     outputs=outputs.reshape(data_.size(0))
@@ -251,7 +248,7 @@ for epoch in range(1, n_epochs+1):
 
 # Commented out IPython magic to ensure Python compatibility.
 #plot results
-!kill 1081
+!kill 1954
 # %tensorboard --logdir logs/gradient_tape
 
 correct = 0
