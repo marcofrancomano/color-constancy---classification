@@ -8,7 +8,7 @@ Original file is located at
 """
 
 import torch
-model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet34', pretrained=True)
+model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
 model.eval()
 
 from google.colab import drive
@@ -34,7 +34,7 @@ num_ftrs = model.fc.in_features
 model.fc = torch.nn.Linear(num_ftrs, 1)
 unb_criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(0.346))
 criterion = torch.nn.BCEWithLogitsLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9,weight_decay=0.0)
+optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9,weight_decay=0.15)
 
 from torchvision.transforms.transforms import Normalize
 import numpy as np
@@ -45,9 +45,9 @@ import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
 import os
-import albumentations as A
 import cv2
-!pip install albumentations==0.4.6
+!pip install albumentations==0.5.2
+import albumentations as A
 from albumentations.pytorch.transforms import ToTensorV2
 
 
@@ -55,6 +55,8 @@ preprocess_train = A.Compose([
     A.Normalize(max_pixel_value=1.0),
     A.RandomCropNearBBox(0.15),
     A.HorizontalFlip(p=0.5),
+    A.MedianBlur (blur_limit=5, always_apply=False, p=0.5),
+    #A.MotionBlur(p=0.5),
     ToTensorV2(),
 
 
@@ -192,7 +194,7 @@ def evaluate(model,dataloader,criterion,device):
   model.train()
   return val_loss
 
-n_epochs = 30
+n_epochs = 50
 
 train_loss = 0
 dataset_size=len(train_dataset)
@@ -248,7 +250,7 @@ for epoch in range(1, n_epochs+1):
 
 # Commented out IPython magic to ensure Python compatibility.
 #plot results
-#!kill 1954
+!kill 1054
 # %tensorboard --logdir logs/gradient_tape
 
 correct = 0
